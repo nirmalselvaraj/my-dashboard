@@ -274,16 +274,26 @@ app.get('/auth/google/callback', async (req, res) => {
   try {
     const oauth2Client = createOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code);
+    console.log('[photos auth] token scope:', tokens.scope);
+    // Clear any cached photos so they're re-fetched with the new token
+    try { await redis.del(PHOTOS_TOKEN_KEY); await redis.del(PHOTOS_CACHE_KEY); } catch { /* ignore */ }
     await cacheSet(PHOTOS_TOKEN_KEY, tokens, 365 * 24 * 3600);
     res.send(`<html><body style="background:#030712;color:#f1f5f9;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px">
       <div style="font-size:3rem">✓</div>
       <div style="font-size:1.4rem;font-weight:700">Google Photos connected!</div>
+      <div style="font-size:.8rem;color:#94a3b8">Scope: ${tokens.scope}</div>
       <a href="/" style="color:#06b6d4;text-decoration:none;font-size:.95rem;padding:10px 20px;border:1px solid #06b6d4;border-radius:10px">← Back to dashboard</a>
     </body></html>`);
   } catch (err) {
     console.error('[photos auth]', err.message);
     res.status(500).send('OAuth error: ' + err.message);
   }
+});
+
+// GET /auth/google/disconnect — clear stored tokens
+app.get('/auth/google/disconnect', async (req, res) => {
+  try { await redis.del(PHOTOS_TOKEN_KEY); await redis.del(PHOTOS_CACHE_KEY); } catch { /* ignore */ }
+  res.redirect('/');
 });
 
 // GET /api/photos/status — is the user authenticated?
@@ -306,11 +316,16 @@ app.get('/api/photos', async (req, res) => {
 
     const oauth2Client = createOAuth2Client();
     oauth2Client.setCredentials(tokens);
-    const { credentials } = await oauth2Client.refreshAccessToken();
-    await cacheSet(PHOTOS_TOKEN_KEY, { ...tokens, ...credentials }, 365 * 24 * 3600);
+    // Save updated tokens when they are refreshed automatically
+    oauth2Client.on('tokens', async (newTokens) => {
+      await cacheSet(PHOTOS_TOKEN_KEY, { ...tokens, ...newTokens }, 365 * 24 * 3600);
+    });
+    const { token: accessToken } = await oauth2Client.getAccessToken();
+    if (!accessToken) throw new Error('Could not obtain access token');
+    console.log('[photos] using access token ending in:', accessToken.slice(-6));
 
     const response = await axios.get('https://photoslibrary.googleapis.com/v1/mediaItems', {
-      headers: { Authorization: `Bearer ${credentials.access_token}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
       params: { pageSize: 30 },
       timeout: 15000,
     });

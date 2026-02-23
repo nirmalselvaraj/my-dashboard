@@ -331,6 +331,10 @@ app.get('/api/photos', async (req, res) => {
     res.json({ success: true, items, cached: false });
   } catch (err) {
     console.error('[photos]', err.message);
+    if (err.response) {
+      console.error('[photos] status:', err.response.status);
+      console.error('[photos] body:', JSON.stringify(err.response.data));
+    }
     res.status(502).json({ success: false, error: err.message });
   }
 });

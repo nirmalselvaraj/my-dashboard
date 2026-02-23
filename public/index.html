@@ -365,6 +365,32 @@ header{
 /* ═══════════════════════════════════════════════════
    RESPONSIVE
    ═══════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   7-DAY FORECAST
+   ═══════════════════════════════════════════════════ */
+.forecast-grid{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:6px;
+}
+.forecast-day{
+  background:rgba(0,0,0,.2);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:10px 6px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  text-align:center;
+  transition:transform .2s,border-color .2s;
+  cursor:default;
+}
+.forecast-day:hover{transform:translateY(-2px);border-color:var(--accent)}
+.forecast-day.today{border-color:rgba(6,182,212,.4);background:rgba(6,182,212,.08)}
+.forecast-dow{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)}
+.forecast-emoji{font-size:1.4rem;line-height:1;margin:2px 0}
+.forecast-hi{font-family:var(--mono);font-size:.82rem;font-weight:700;color:var(--text)}
+.forecast-lo{font-family:var(--mono);font-size:.72rem;color:var(--text-dim)}
+.forecast-rain{font-size:.6rem;color:var(--accent);font-weight:600;margin-top:2px}
+
 @media(max-width:1100px){
   .stocks-grid{grid-template-columns:repeat(2,1fr)}
 }
@@ -372,12 +398,14 @@ header{
   .main-grid{grid-template-columns:1fr}
   .news-grid{grid-template-columns:1fr}
   .stocks-grid{grid-template-columns:repeat(2,1fr)}
+  .forecast-grid{grid-template-columns:repeat(4,1fr)}
 }
 @media(max-width:520px){
   #app{padding:14px 14px 30px}
   .stocks-grid{grid-template-columns:1fr}
   header{flex-direction:column;gap:16px;text-align:center}
   .header-right{justify-content:center;flex-wrap:wrap}
+  .forecast-grid{grid-template-columns:repeat(4,1fr)}
 }
 </style>
 </head>
@@ -416,22 +444,37 @@ header{
   <div class="main-grid">
 
     <!-- WEATHER -->
-    <div class="card" id="weather-card">
-      <div class="section-label weather-label">
-        <span class="dot" style="background:var(--accent);box-shadow:0 0 8px var(--accent)"></span>
-        Weather
-        <span class="live-dot" style="margin-left:4px"></span>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card" id="weather-card">
+        <div class="section-label weather-label">
+          <span class="dot" style="background:var(--accent);box-shadow:0 0 8px var(--accent)"></span>
+          Weather
+          <span class="live-dot" style="margin-left:4px"></span>
+        </div>
+        <div id="weather-content">
+          <!-- skeleton -->
+          <div class="skel skel-big" style="margin-bottom:14px;height:60px;width:55%"></div>
+          <div class="skel skel-text" style="width:70%"></div>
+          <div class="skel skel-text" style="width:55%"></div>
+          <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="skel" style="height:58px;border-radius:10px"></div>
+            <div class="skel" style="height:58px;border-radius:10px"></div>
+            <div class="skel" style="height:58px;border-radius:10px"></div>
+            <div class="skel" style="height:58px;border-radius:10px"></div>
+          </div>
+        </div>
       </div>
-      <div id="weather-content">
-        <!-- skeleton -->
-        <div class="skel skel-big" style="margin-bottom:14px;height:60px;width:55%"></div>
-        <div class="skel skel-text" style="width:70%"></div>
-        <div class="skel skel-text" style="width:55%"></div>
-        <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="skel" style="height:58px;border-radius:10px"></div>
-          <div class="skel" style="height:58px;border-radius:10px"></div>
-          <div class="skel" style="height:58px;border-radius:10px"></div>
-          <div class="skel" style="height:58px;border-radius:10px"></div>
+
+      <!-- 7-DAY FORECAST -->
+      <div class="card" id="forecast-card">
+        <div class="section-label" style="color:var(--accent)">
+          <span class="dot" style="background:var(--accent);box-shadow:0 0 8px var(--accent)"></span>
+          7-Day Forecast
+        </div>
+        <div id="forecast-content">
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">
+            ${Array.from({length:7},()=>`<div class="skel" style="height:90px;border-radius:10px"></div>`).join('')}
+          </div>
         </div>
       </div>
     </div>
@@ -735,6 +778,8 @@ function renderWeatherSkeleton() {
       <div class="skel" style="height:58px;border-radius:10px"></div>
       <div class="skel" style="height:58px;border-radius:10px"></div>
     </div>`;
+  document.getElementById('forecast-content').innerHTML =
+    `<div class="forecast-grid">${Array.from({length:7},()=>`<div class="skel" style="height:90px;border-radius:10px"></div>`).join('')}</div>`;
 }
 
 async function fetchWeather(lat, lon) {
@@ -768,22 +813,31 @@ function renderWeatherError(msg) {
     </div>`;
 }
 
+// WMO code → emoji (Open-Meteo uses WMO codes)
+function wmoEmoji(code) {
+  if (code === 0) return '☀️';
+  if (code <= 2)  return '⛅';
+  if (code === 3) return '☁️';
+  if ([45,48].includes(code)) return '🌫️';
+  if ([51,53,55,56,57].includes(code)) return '🌦️';
+  if ([61,63,65,66,67,80,81,82].includes(code)) return '🌧️';
+  if ([71,73,75,77,85,86].includes(code)) return '❄️';
+  if ([95,96,99].includes(code)) return '⛈️';
+  return '🌡️';
+}
+
 function renderWeather(data) {
-  const cur   = data.current_condition[0];
-  const area  = data.nearest_area[0];
-  const code  = +cur.weatherCode;
-  const tempF = celsiusToF(cur.temp_C);
-  const feelF = celsiusToF(cur.FeelsLikeC);
-  const desc  = cur.weatherDesc[0].value;
-  const emoji = weatherEmoji(code);
+  const cur    = data.current.current_condition[0];
+  const area   = data.current.nearest_area[0];
+  const code   = +cur.weatherCode;
+  const tempF  = celsiusToF(cur.temp_C);
+  const feelF  = celsiusToF(cur.FeelsLikeC);
+  const desc   = cur.weatherDesc[0].value;
+  const emoji  = weatherEmoji(code);
   const wClass = weatherClass(code);
-  const city  = area.areaName[0].value;
+  const city   = area.areaName[0].value;
   const region = area.region[0].value;
   const country = area.country[0].value;
-  const humidity = cur.humidity + '%';
-  const wind = cur.windspeedMiles + ' mph';
-  const vis  = cur.visibility + ' mi';
-  const uv   = cur.uvIndex;
 
   const card = document.getElementById('weather-card');
   card.classList.add(wClass);
@@ -806,17 +860,44 @@ function renderWeather(data) {
       </div>
       <div class="weather-meta-item">
         <span class="meta-label">Humidity</span>
-        <span class="meta-value">${humidity}</span>
+        <span class="meta-value">${cur.humidity}%</span>
       </div>
       <div class="weather-meta-item">
         <span class="meta-label">Wind</span>
-        <span class="meta-value">${wind}</span>
+        <span class="meta-value">${cur.windspeedMiles} mph</span>
       </div>
       <div class="weather-meta-item">
         <span class="meta-label">UV Index</span>
-        <span class="meta-value">${uv}</span>
+        <span class="meta-value">${cur.uvIndex}</span>
       </div>
     </div>`;
+
+  // ── 7-day forecast ────────────────────────────────────────────────────
+  if (data.forecast) {
+    const f     = data.forecast;
+    const today = new Date().toISOString().slice(0, 10);
+    const days  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    const cards = f.time.map((date, i) => {
+      const dow   = date === today ? 'Today' : days[new Date(date + 'T12:00:00').getDay()];
+      const hi    = Math.round(f.temperature_2m_max[i]);
+      const lo    = Math.round(f.temperature_2m_min[i]);
+      const rain  = f.precipitation_probability_max[i];
+      const icon  = wmoEmoji(f.weathercode[i]);
+      const isToday = date === today;
+      return `
+        <div class="forecast-day${isToday ? ' today' : ''}">
+          <div class="forecast-dow">${dow}</div>
+          <div class="forecast-emoji">${icon}</div>
+          <div class="forecast-hi">${hi}°</div>
+          <div class="forecast-lo">${lo}°</div>
+          ${rain > 0 ? `<div class="forecast-rain">💧${rain}%</div>` : ''}
+        </div>`;
+    }).join('');
+
+    document.getElementById('forecast-content').innerHTML =
+      `<div class="forecast-grid">${cards}</div>`;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════

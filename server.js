@@ -37,12 +37,24 @@ app.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*');
    WEATHER  —  wttr.in  (cached per lat/lon)
    ═══════════════════════════════════════════════════════════════════════ */
 async function fetchWeatherData(lat, lon) {
-  const url = `https://wttr.in/${encodeURIComponent(lat)},${encodeURIComponent(lon)}?format=j1`;
-  const { data } = await axios.get(url, {
-    timeout: 10000,
-    headers: { 'User-Agent': 'curl/7.68.0', Accept: 'application/json' }
-  });
-  return data;
+  const [current, forecast] = await Promise.all([
+    axios.get(`https://wttr.in/${encodeURIComponent(lat)},${encodeURIComponent(lon)}?format=j1`, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'curl/7.68.0', Accept: 'application/json' }
+    }),
+    axios.get('https://api.open-meteo.com/v1/forecast', {
+      timeout: 10000,
+      params: {
+        latitude: lat, longitude: lon,
+        daily: 'temperature_2m_max,temperature_2m_min,weathercode,precipitation_probability_max,windspeed_10m_max',
+        temperature_unit: 'fahrenheit',
+        wind_speed_unit: 'mph',
+        forecast_days: 7,
+        timezone: 'auto'
+      }
+    })
+  ]);
+  return { current: current.data, forecast: forecast.data.daily };
 }
 
 app.get('/api/weather', async (req, res) => {
@@ -52,7 +64,6 @@ app.get('/api/weather', async (req, res) => {
   const cacheKey = `weather:${parseFloat(lat).toFixed(2)}:${parseFloat(lon).toFixed(2)}`;
 
   try {
-    // Serve from cache if fresh
     const cached = await cacheGet(cacheKey);
     if (cached) {
       console.log('[weather] cache HIT');

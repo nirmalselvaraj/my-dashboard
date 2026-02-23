@@ -4,6 +4,7 @@ import Parser   from 'rss-parser';
 import Redis    from 'ioredis';
 import path     from 'path';
 import { fileURLToPath } from 'url';
+import { google } from 'googleapis';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -235,6 +236,101 @@ app.get('/api/news', async (req, res) => {
     });
   } catch (err) {
     console.error('[news]', err.message);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   GOOGLE PHOTOS  —  OAuth 2.0 + Photos Library API
+   ═══════════════════════════════════════════════════════════════════════ */
+const PHOTOS_TOKEN_KEY = 'google:photos:tokens';
+const PHOTOS_CACHE_KEY = 'photos:items';
+const PHOTOS_CACHE_TTL = 3600; // 1 hour
+const PHOTOS_SCOPES    = ['https://www.googleapis.com/auth/photoslibrary.readonly'];
+
+function createOAuth2Client() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+}
+
+// GET /auth/google — redirect to consent screen
+app.get('/auth/google', (req, res) => {
+  const oauth2Client = createOAuth2Client();
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: PHOTOS_SCOPES,
+    prompt: 'consent',
+  });
+  res.redirect(url);
+});
+
+// GET /auth/google/callback — exchange code for tokens
+app.get('/auth/google/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing code');
+  try {
+    const oauth2Client = createOAuth2Client();
+    const { tokens } = await oauth2Client.getToken(code);
+    await cacheSet(PHOTOS_TOKEN_KEY, tokens, 365 * 24 * 3600);
+    res.send(`<html><body style="background:#030712;color:#f1f5f9;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px">
+      <div style="font-size:3rem">✓</div>
+      <div style="font-size:1.4rem;font-weight:700">Google Photos connected!</div>
+      <a href="/" style="color:#06b6d4;text-decoration:none;font-size:.95rem;padding:10px 20px;border:1px solid #06b6d4;border-radius:10px">← Back to dashboard</a>
+    </body></html>`);
+  } catch (err) {
+    console.error('[photos auth]', err.message);
+    res.status(500).send('OAuth error: ' + err.message);
+  }
+});
+
+// GET /api/photos/status — is the user authenticated?
+app.get('/api/photos/status', async (req, res) => {
+  const tokens = await cacheGet(PHOTOS_TOKEN_KEY);
+  res.json({ connected: !!tokens });
+});
+
+// GET /api/photos — fetch recent photos (cached 1 hr)
+app.get('/api/photos', async (req, res) => {
+  try {
+    const tokens = await cacheGet(PHOTOS_TOKEN_KEY);
+    if (!tokens) return res.status(401).json({ success: false, error: 'not_authenticated' });
+
+    const cached = await cacheGet(PHOTOS_CACHE_KEY);
+    if (cached) {
+      console.log('[photos] cache HIT');
+      return res.json({ success: true, items: cached, cached: true });
+    }
+
+    const oauth2Client = createOAuth2Client();
+    oauth2Client.setCredentials(tokens);
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    await cacheSet(PHOTOS_TOKEN_KEY, { ...tokens, ...credentials }, 365 * 24 * 3600);
+
+    const response = await axios.get('https://photoslibrary.googleapis.com/v1/mediaItems', {
+      headers: { Authorization: `Bearer ${credentials.access_token}` },
+      params: { pageSize: 30 },
+      timeout: 15000,
+    });
+
+    const items = (response.data.mediaItems || [])
+      .filter(item => item.mediaMetadata?.photo)
+      .map(item => ({
+        id:            item.id,
+        baseUrl:       item.baseUrl,
+        filename:      item.filename,
+        creationTime:  item.mediaMetadata?.creationTime,
+        width:         item.mediaMetadata?.width,
+        height:        item.mediaMetadata?.height,
+      }));
+
+    await cacheSet(PHOTOS_CACHE_KEY, items, PHOTOS_CACHE_TTL);
+    console.log(`[photos] fetched ${items.length} photos`);
+    res.json({ success: true, items, cached: false });
+  } catch (err) {
+    console.error('[photos]', err.message);
     res.status(502).json({ success: false, error: err.message });
   }
 });

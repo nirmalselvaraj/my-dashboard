@@ -13,7 +13,9 @@ const parser = new Parser({ timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.
 const PORT   = process.env.PORT || 3000;
 
 /* ── Redis ─────────────────────────────────────────────────────────────── */
-const redis = new Redis({ host: '127.0.0.1', port: 6379, lazyConnect: true });
+const redis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL, { lazyConnect: true })
+  : new Redis({ host: '127.0.0.1', port: 6379, lazyConnect: true });
 redis.on('error', err => console.error('[redis]', err.message));
 await redis.connect().catch(() => console.warn('[redis] could not connect — running without cache'));
 

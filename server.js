@@ -19,15 +19,17 @@ const redis = process.env.REDIS_URL
 redis.on('error', err => console.error('[redis]', err.message));
 await redis.connect().catch(() => console.warn('[redis] could not connect — running without cache'));
 
-const CACHE_TTL = 300; // 5 minutes in seconds
+const CACHE_TTL         = 300;   // 5 min — stocks
+const WEATHER_DATA_TTL  = 7200;  // 2 hours — keep stale weather data available
+const WEATHER_FRESH_TTL = 900;   // 15 min  — how long before we consider it stale
 
 async function cacheGet(key) {
   try { const v = await redis.get(key); return v ? JSON.parse(v) : null; }
   catch { return null; }
 }
 
-async function cacheSet(key, value) {
-  try { await redis.set(key, JSON.stringify(value), 'EX', CACHE_TTL); }
+async function cacheSet(key, value, ttl = CACHE_TTL) {
+  try { await redis.set(key, JSON.stringify(value), 'EX', ttl); }
   catch { /* ignore */ }
 }
 
@@ -59,22 +61,56 @@ async function fetchWeatherData(lat, lon) {
   return { current: current.data, forecast: forecast.data.daily };
 }
 
+// Refreshes weather in the background and updates both Redis keys
+async function refreshWeatherInBackground(lat, lon, dataKey, freshKey) {
+  try {
+    console.log('[weather] background refresh starting…');
+    const data = await fetchWeatherData(lat, lon);
+    await Promise.all([
+      cacheSet(dataKey,  data, WEATHER_DATA_TTL),
+      cacheSet(freshKey, 1,    WEATHER_FRESH_TTL),
+    ]);
+    console.log('[weather] background refresh done ✓');
+  } catch (err) {
+    console.error('[weather] background refresh failed:', err.message);
+  }
+}
+
 app.get('/api/weather', async (req, res) => {
   const { lat, lon } = req.query;
   if (!lat || !lon) return res.status(400).json({ success: false, error: 'lat and lon are required' });
 
-  const cacheKey = `weather:${parseFloat(lat).toFixed(2)}:${parseFloat(lon).toFixed(2)}`;
+  const key   = `${parseFloat(lat).toFixed(2)}:${parseFloat(lon).toFixed(2)}`;
+  const dataKey  = `weather:data:${key}`;
+  const freshKey = `weather:fresh:${key}`;
 
   try {
-    const cached = await cacheGet(cacheKey);
-    if (cached) {
-      console.log('[weather] cache HIT');
+    const [cached, isFresh] = await Promise.all([
+      cacheGet(dataKey),
+      redis.exists(freshKey).catch(() => 0),
+    ]);
+
+    if (cached && isFresh) {
+      // Fresh cache — respond instantly
+      console.log('[weather] cache HIT (fresh)');
       return res.json({ success: true, data: cached, cached: true });
     }
 
+    if (cached && !isFresh) {
+      // Stale cache — respond instantly with old data, refresh in background
+      console.log('[weather] cache HIT (stale) — refreshing in background');
+      res.json({ success: true, data: cached, cached: true, stale: true });
+      refreshWeatherInBackground(lat, lon, dataKey, freshKey); // fire and forget
+      return;
+    }
+
+    // No cache at all — fetch and wait (first ever request for this location)
     console.log('[weather] cache MISS — fetching');
     const data = await fetchWeatherData(lat, lon);
-    await cacheSet(cacheKey, data);
+    await Promise.all([
+      cacheSet(dataKey,  data, WEATHER_DATA_TTL),
+      cacheSet(freshKey, 1,    WEATHER_FRESH_TTL),
+    ]);
     res.json({ success: true, data, cached: false });
   } catch (err) {
     console.error('[weather]', err.message);
